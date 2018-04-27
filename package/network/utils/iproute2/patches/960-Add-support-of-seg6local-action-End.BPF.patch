@@ -1,0 +1,254 @@
+From addfc58e9fea4ff1fb6a9ff444a3d7c55389b90c Mon Sep 17 00:00:00 2001
+From: Mathieu Xhonneux <m.xhonneux@gmail.com>
+Date: Fri, 27 Apr 2018 18:25:54 +0100
+Subject: [PATCH 1/1] seg6local action End.BPF support
+
+---
+ include/uapi/linux/bpf.h        | 66 ++++++++++++++++++++++++++++++++++++-----
+ include/uapi/linux/lwtunnel.h   |  1 +
+ include/uapi/linux/seg6_local.h |  5 +++-
+ ip/iproute_lwtunnel.c           | 24 ++++++++++++++-
+ lib/bpf.c                       |  6 ++++
+ 5 files changed, 92 insertions(+), 10 deletions(-)
+
+diff --git a/include/uapi/linux/bpf.h b/include/uapi/linux/bpf.h
+index 81f9145f..2cd845df 100644
+--- a/include/uapi/linux/bpf.h
++++ b/include/uapi/linux/bpf.h
+@@ -93,7 +93,6 @@ enum bpf_cmd {
+ 	BPF_PROG_GET_FD_BY_ID,
+ 	BPF_MAP_GET_FD_BY_ID,
+ 	BPF_OBJ_GET_INFO_BY_FD,
+-	BPF_PROG_QUERY,
+ };
+ 
+ enum bpf_map_type {
+@@ -113,7 +112,6 @@ enum bpf_map_type {
+ 	BPF_MAP_TYPE_HASH_OF_MAPS,
+ 	BPF_MAP_TYPE_DEVMAP,
+ 	BPF_MAP_TYPE_SOCKMAP,
+-	BPF_MAP_TYPE_CPUMAP,
+ };
+ 
+ enum bpf_prog_type {
+@@ -132,7 +130,7 @@ enum bpf_prog_type {
+ 	BPF_PROG_TYPE_LWT_XMIT,
+ 	BPF_PROG_TYPE_SOCK_OPS,
+ 	BPF_PROG_TYPE_SK_SKB,
+-	BPF_PROG_TYPE_CGROUP_DEVICE,
++	BPF_PROG_TYPE_LWT_SEG6LOCAL,
+ };
+ 
+ enum bpf_attach_type {
+@@ -142,7 +140,6 @@ enum bpf_attach_type {
+ 	BPF_CGROUP_SOCK_OPS,
+ 	BPF_SK_SKB_STREAM_PARSER,
+ 	BPF_SK_SKB_STREAM_VERDICT,
+-	BPF_CGROUP_DEVICE,
+ 	__MAX_BPF_ATTACH_TYPE
+ };
+ 
+@@ -677,6 +674,52 @@ union bpf_attr {
+  *     @buf: buf to fill
+  *     @buf_size: size of the buf
+  *     Return : 0 on success or negative error code
++ *
++ * int lwt_push_encap(skb, type, hdr, len)
++ *     Push an encapsulation header on top of current packet.
++ *     @type: type of header to push :
++ *          - BPF_LWT_ENCAP_SEG6 (push an IPv6 Segment Routing Header, struct
++ *                    ipv6_sr_hdr, the helper will add the outer IPv6 header)
++ *          - BPF_LWT_ENCAP_SEG6_INLINE (push an IPv6 Segment Routing Header,
++ *                       struct ipv6_sr_hdr, inside the existing IPv6 header)
++ *     @hdr: pointer where to copy the header from
++ *     @len: size of hdr in bytes
++ *     Return: 0 on success or negative error
++ *
++ * int lwt_seg6_store_bytes(skb, offset, from, len)
++ *     Store bytes into the outermost Segment Routing header of an IPv6 header.
++ *     Only the flags, tag and TLVs can be modified.
++ *     @skb: pointer to skb
++ *     @offset: offset within packet from skb->data
++ *     @from: pointer where to copy bytes from
++ *     @len: number of bytes to store into packet
++ *     Return: 0 on success or negative error
++ *
++ * int lwt_seg6_adjust_srh(skb, offset, delta)
++ *     Adjust the size allocated to TLVs in the outermost IPv6 Segment Routing
++ *     Header (grow if delta > 0, else shrink)
++ *     @skb: pointer to skb
++ *     @offset: offset within packet from skb->data where SRH will grow/shrink,
++ *              only offsets after the segments are accepted
++ *     @delta: a positive/negative integer
++ *     Return: 0 on success or negative on error
++ *
++ * int lwt_seg6_action(skb, action, param, param_len)
++ *     Apply a IPv6 Segment Routing action on a packet with an IPv6 Segment
++ *     Routing Header.
++ *     @action:
++ *              - End.X: SEG6_LOCAL_ACTION_END_X
++ *                                           (type of param: struct in6_addr)
++ *              - End.T: SEG6_LOCAL_ACTION_END_T
++ *                                           (type of param: int)
++ *              - End.B6: SEG6_LOCAL_ACTION_END_B6
++ *                                           (type of param: struct ipv6_sr_hdr)
++ *              - End.B6.Encap: SEG6_LOCAL_ACTION_END_B6_ENCAP
++ *                                           (type of param: struct ipv6_sr_hdr)
++ *     @param: pointer to the parameter required by the action
++ *     @param_len: length of param in bytes
++ *     Return: 0 on success or negative error
++
+  */
+ #define __BPF_FUNC_MAPPER(FN)		\
+ 	FN(unspec),			\
+@@ -733,10 +776,11 @@ union bpf_attr {
+ 	FN(redirect_map),		\
+ 	FN(sk_redirect_map),		\
+ 	FN(sock_map_update),		\
+-	FN(xdp_adjust_meta),		\
+-	FN(perf_event_read_value),	\
+-	FN(perf_prog_read_value),	\
+-	FN(getsockopt),
++    FN(lwt_push_encap),		\
++	FN(lwt_seg6_store_bytes),	\
++	FN(lwt_seg6_adjust_srh),	\
++	FN(lwt_seg6_action),
++
+ 
+ /* integer value in 'imm' field of BPF_CALL instruction selects which helper
+  * function eBPF program intends to call
+@@ -793,6 +837,12 @@ enum bpf_adj_room_mode {
+ 	BPF_ADJ_ROOM_NET,
+ };
+ 
++/* Encapsulation type for BPF_FUNC_lwt_push_encap helper. */
++enum bpf_lwt_encap_mode {
++	BPF_LWT_ENCAP_SEG6,
++	BPF_LWT_ENCAP_SEG6_INLINE
++};
++
+ /* user accessible mirror of in-kernel sk_buff.
+  * new fields can only be added to the end of this structure
+  */
+diff --git a/include/uapi/linux/lwtunnel.h b/include/uapi/linux/lwtunnel.h
+index 3f3fe6f3..e0d23300 100644
+--- a/include/uapi/linux/lwtunnel.h
++++ b/include/uapi/linux/lwtunnel.h
+@@ -61,6 +61,7 @@ enum {
+ 	LWT_BPF_OUT,
+ 	LWT_BPF_XMIT,
+ 	LWT_BPF_XMIT_HEADROOM,
++	LWT_BPF_SEG6LOCAL,
+ 	__LWT_BPF_MAX,
+ };
+ 
+diff --git a/include/uapi/linux/seg6_local.h b/include/uapi/linux/seg6_local.h
+index 76b90d60..d16c8679 100644
+--- a/include/uapi/linux/seg6_local.h
++++ b/include/uapi/linux/seg6_local.h
+@@ -25,11 +25,12 @@ enum {
+ 	SEG6_LOCAL_NH6,
+ 	SEG6_LOCAL_IIF,
+ 	SEG6_LOCAL_OIF,
++	SEG6_LOCAL_BPF,
+ 	__SEG6_LOCAL_MAX,
+ };
+ #define SEG6_LOCAL_MAX (__SEG6_LOCAL_MAX - 1)
+ 
+-enum {
++enum seg6_local_action {
+ 	SEG6_LOCAL_ACTION_UNSPEC	= 0,
+ 	/* node segment */
+ 	SEG6_LOCAL_ACTION_END		= 1,
+@@ -59,6 +60,8 @@ enum {
+ 	SEG6_LOCAL_ACTION_END_AS	= 13,
+ 	/* forward to SR-unaware VNF with masquerading */
+ 	SEG6_LOCAL_ACTION_END_AM	= 14,
++	/* custom BPF action */
++	SEG6_LOCAL_ACTION_BPF		= 15,
+ 
+ 	__SEG6_LOCAL_ACTION_MAX,
+ };
+diff --git a/ip/iproute_lwtunnel.c b/ip/iproute_lwtunnel.c
+index da6ebb8e..fa31b037 100644
+--- a/ip/iproute_lwtunnel.c
++++ b/ip/iproute_lwtunnel.c
+@@ -168,6 +168,7 @@ static const char *seg6_action_names[SEG6_LOCAL_ACTION_MAX + 1] = {
+ 	[SEG6_LOCAL_ACTION_END_S]		= "End.S",
+ 	[SEG6_LOCAL_ACTION_END_AS]		= "End.AS",
+ 	[SEG6_LOCAL_ACTION_END_AM]		= "End.AM",
++	[SEG6_LOCAL_ACTION_BPF]		        = "End.BPF",
+ };
+ 
+ static const char *format_action_type(int action)
+@@ -236,6 +237,15 @@ static void print_encap_seg6local(FILE *fp, struct rtattr *encap)
+ 
+ 		fprintf(fp, "oif %s ", ll_index_to_name(oif));
+ 	}
++
++	if (tb[SEG6_LOCAL_BPF]) {
++		struct rtattr *tb_bpf[LWT_BPF_PROG_MAX+1];
++
++		parse_rtattr_nested(tb_bpf, LWT_BPF_PROG_MAX, tb[SEG6_LOCAL_BPF]);
++
++		if (tb_bpf[LWT_BPF_PROG_NAME])
++			fprintf(fp, "%s ", rta_getattr_str(tb_bpf[LWT_BPF_PROG_NAME]));
++	}
+ }
+ 
+ static void print_encap_mpls(FILE *fp, struct rtattr *encap)
+@@ -510,6 +520,11 @@ static int parse_encap_seg6(struct rtattr *rta, size_t len, int *argcp,
+ 	return 0;
+ }
+ 
++static int lwt_parse_bpf(struct rtattr *rta, size_t len,
++			 int *argcp, char ***argvp,
++			 int attr, const enum bpf_prog_type bpf_type); // TODO keep this here ?
++
++
+ static int parse_encap_seg6local(struct rtattr *rta, size_t len, int *argcp,
+ 				 char ***argvp)
+ {
+@@ -532,6 +547,13 @@ static int parse_encap_seg6local(struct rtattr *rta, size_t len, int *argcp,
+ 			if (!action)
+ 				invarg("\"action\" value is invalid\n", *argv);
+ 			rta_addattr32(rta, len, SEG6_LOCAL_ACTION, action);
++
++            if (action == SEG6_LOCAL_ACTION_BPF) {
++                NEXT_ARG();
++                if (lwt_parse_bpf(rta, len, &argc, &argv, SEG6_LOCAL_BPF,
++                          BPF_PROG_TYPE_LWT_SEG6LOCAL) < 0)
++                    return -1;
++            }
+ 		} else if (strcmp(*argv, "table") == 0) {
+ 			NEXT_ARG();
+ 			if (table_ok++)
+@@ -591,7 +613,7 @@ static int parse_encap_seg6local(struct rtattr *rta, size_t len, int *argcp,
+ 			} else {
+ 				continue;
+ 			}
+-		} else {
++        } else {
+ 			break;
+ 		}
+ 		argc--; argv++;
+diff --git a/lib/bpf.c b/lib/bpf.c
+index d32f1b80..18be7326 100644
+--- a/lib/bpf.c
++++ b/lib/bpf.c
+@@ -95,6 +95,12 @@ static const struct bpf_prog_meta __bpf_prog_meta[] = {
+ 		.subdir		= "ip",
+ 		.section	= ELF_SECTION_PROG,
+ 	},
++	[BPF_PROG_TYPE_LWT_SEG6LOCAL] = {
++		.type		= "lwt_seg6local",
++		.subdir		= "ip",
++		.section	= ELF_SECTION_PROG,
++	},
++
+ };
+ 
+ static const char *bpf_prog_to_subdir(enum bpf_prog_type type)
+-- 
+2.16.1
+
