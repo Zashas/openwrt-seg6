@@ -1,0 +1,34 @@
+From 8041181c5b261d24f530be737460321a424a19e4 Mon Sep 17 00:00:00 2001
+From: Mathieu Xhonneux <m.xhonneux@gmail.com>
+Date: Wed, 23 May 2018 23:38:53 +0100
+Subject: [PATCH] fix kernel panic bug SRH encap
+
+---
+ net/ipv6/seg6_iptunnel.c | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/net/ipv6/seg6_iptunnel.c b/net/ipv6/seg6_iptunnel.c
+index f343e6f0fc95..ed024f3009a8 100644
+--- a/net/ipv6/seg6_iptunnel.c
++++ b/net/ipv6/seg6_iptunnel.c
+@@ -103,7 +103,7 @@ int seg6_do_srh_encap(struct sk_buff *skb, struct ipv6_sr_hdr *osrh, int proto)
+ 	hdrlen = (osrh->hdrlen + 1) << 3;
+ 	tot_len = hdrlen + sizeof(*hdr);
+ 
+-	err = skb_cow_head(skb, tot_len);
++	err = skb_cow_head(skb, tot_len + skb->mac_len);
+ 	if (unlikely(err))
+ 		return err;
+ 
+@@ -161,7 +161,7 @@ int seg6_do_srh_inline(struct sk_buff *skb, struct ipv6_sr_hdr *osrh)
+ 
+ 	hdrlen = (osrh->hdrlen + 1) << 3;
+ 
+-	err = skb_cow_head(skb, hdrlen);
++	err = skb_cow_head(skb, hdrlen + skb->mac_len);
+ 	if (unlikely(err))
+ 		return err;
+ 
+-- 
+2.16.1
+
