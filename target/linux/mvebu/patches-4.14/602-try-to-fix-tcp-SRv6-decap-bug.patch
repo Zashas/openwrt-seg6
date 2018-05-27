@@ -1,0 +1,25 @@
+From fa3f09da27734a62731eedd31bd8edc20c776dfa Mon Sep 17 00:00:00 2001
+From: Mathieu Xhonneux <m.xhonneux@gmail.com>
+Date: Sun, 27 May 2018 22:01:19 +0100
+Subject: [PATCH] Try to fix tcp SRv6 decap bug
+
+---
+ drivers/net/ethernet/marvell/mvneta.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/net/ethernet/marvell/mvneta.c b/drivers/net/ethernet/marvell/mvneta.c
+index a539263cd79c..32a28b6593f8 100644
+--- a/drivers/net/ethernet/marvell/mvneta.c
++++ b/drivers/net/ethernet/marvell/mvneta.c
+@@ -4336,7 +4336,7 @@ static int mvneta_probe(struct platform_device *pdev)
+ 		}
+ 	}
+ 
+-	dev->features = NETIF_F_SG | NETIF_F_IP_CSUM | NETIF_F_IPV6_CSUM | NETIF_F_TSO;
++	dev->features = NETIF_F_SG | NETIF_F_IP_CSUM;
+ 	dev->hw_features |= dev->features;
+ 	dev->vlan_features |= dev->features;
+ 	dev->priv_flags |= IFF_LIVE_ADDR_CHANGE;
+-- 
+2.16.1
+
